@@ -18,7 +18,8 @@ import ChatWindow from "./components/ChatWindow";
 import VoiceInput from "./components/VoiceInput";
 import { sendMessageToOpenAI } from "./api/openai";
 import mammoth from "mammoth";
-import * as pdfjsLib from "pdfjs-dist/build/pdf";
+import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
+GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
 import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
 import DescriptionIcon from "@mui/icons-material/Description";
 import TableChartIcon from "@mui/icons-material/TableChart";
@@ -30,7 +31,6 @@ import EditIcon from "@mui/icons-material/Edit";
 import { useTheme } from "@mui/material/styles";
 import MenuIcon from "@mui/icons-material/Menu";
 import useMediaQuery from "@mui/material/useMediaQuery";
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 function App() {
   const theme = useTheme();
@@ -316,27 +316,59 @@ function App() {
           parts.push({ text: prompt });
         } else if (filename.match(/\.pdf$/i)) {
           // PDF: extract text and combine with question
-          const pdfData = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(new Uint8Array(reader.result));
-            reader.onerror = reject;
-            reader.readAsArrayBuffer(file);
-          });
-          const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
-          let pdfText = "";
-          for (let i = 1; i <= pdf.numPages && i <= 10; i++) {
-            const page = await pdf.getPage(i);
-            const content = await page.getTextContent();
-            pdfText += content.items.map((item) => item.str).join(" ") + "\n";
+          try {
+            const pdfData = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                if (reader.result) {
+                  resolve(new Uint8Array(reader.result));
+                } else {
+                  reject(new Error("Failed to read PDF file (empty result)."));
+                }
+              };
+              reader.onerror = (e) => {
+                reject(new Error("FileReader error: " + (e?.message || e)));
+              };
+              reader.readAsArrayBuffer(file);
+            });
+            let pdf;
+            try {
+              pdf = await getDocument({ data: pdfData }).promise;
+            } catch (err) {
+              console.error("PDF.js getDocument error:", err);
+              setError("Failed to parse PDF file: " + (err.message || err));
+              return;
+            }
+            let pdfText = "";
+            for (let i = 1; i <= pdf.numPages && i <= 10; i++) {
+              try {
+                const page = await pdf.getPage(i);
+                const content = await page.getTextContent();
+                pdfText +=
+                  content.items.map((item) => item.str).join(" ") + "\n";
+              } catch (err) {
+                console.error(`Error reading page ${i} of PDF:`, err);
+                setError(
+                  `Failed to read page ${i} of PDF: ${
+                    err && err.message ? err.message : err
+                  }`
+                );
+                break;
+              }
+            }
+            let prompt = `Here is the content of the PDF file "${filename}":\n${pdfText.slice(
+              0,
+              12000
+            )}\n`;
+            if (input.trim()) {
+              prompt += `\nQuestion: ${input.trim()}`;
+            }
+            parts.push({ text: prompt });
+          } catch (err) {
+            console.error("PDF file processing error:", err);
+            setError("Failed to process PDF file: " + (err.message || err));
+            return;
           }
-          let prompt = `Here is the content of the PDF file "${filename}":\n${pdfText.slice(
-            0,
-            12000
-          )}\n`;
-          if (input.trim()) {
-            prompt += `\nQuestion: ${input.trim()}`;
-          }
-          parts.push({ text: prompt });
         } else if (filename.match(/\.docx$/i)) {
           // DOCX: extract text and combine with question
           const arrayBuffer = await new Promise((resolve, reject) => {
