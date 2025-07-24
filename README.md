@@ -44,8 +44,6 @@
 
 ## 📁 Project Structure
 
-## 📁 Project Structure
-
 ```text
 Chat-mate/
 ├── client/                         # Frontend (React + Vite)
